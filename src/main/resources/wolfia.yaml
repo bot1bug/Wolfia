@@ -64,6 +64,8 @@ spring:
         # allow postgres to cast strings (varchars) more freely to actual column types
         # source https://jdbc.postgresql.org/documentation/head/connect.html
         stringtype: "unspecified"
+  jpa:
+    open-in-view: false
 
 togglz:
   enabled: true
@@ -104,12 +106,14 @@ management:
         enabled: true
   endpoint:
     health:
-      enabled: true
+      access: read-only
       show-details: always
     prometheus:
-      enabled: true
+      access: read-only
   endpoints:
-    enabled-by-default: false
+    access:
+      default: none
+      max-permitted: read-only
     web:
       exposure:
         include:

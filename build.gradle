@@ -33,7 +33,7 @@ buildscript {
         classpath "gradle.plugin.org.flywaydb:gradle-plugin-publishing:$flywayVersion"
         classpath "org.flywaydb:flyway-database-postgresql:$flywayVersion"
 
-        classpath "gradle.plugin.com.gorylenko.gradle-git-properties:gradle-git-properties:$gradleGitVersion"
+        classpath "com.gorylenko.gradle-git-properties:com.gorylenko.gradle-git-properties.gradle.plugin:$gradleGitVersion"
         classpath "org.ajoberstar.grgit:grgit-gradle:$grGitVersion"
         classpath "org.sonarsource.scanner.gradle:sonarqube-gradle-plugin:$sonarVersion"
         classpath "nu.studer:gradle-jooq-plugin:$jooqPluginVersion"
@@ -110,8 +110,11 @@ tasks.register('resolveAndLockAll') {
     }
     doLast {
         configurations.configureEach {
-            resolutionStrategy {
-                componentSelection properReleasesOnlyOrUpdateNonStable()
+            if (it.name != "mockitoAgent") {
+                // Avoid "Cannot change resolution strategy of dependency configuration ':mockitoAgent' after it has been resolved."
+                resolutionStrategy {
+                    componentSelection properReleasesOnlyOrUpdateNonStable()
+                }
             }
         }
         configurations
@@ -141,12 +144,12 @@ allprojects {
     repositories {
         mavenCentral()
         maven {
-            url 'https://m2.dv8tion.net/releases'
+            url = 'https://m2.dv8tion.net/releases'
             content { includeModule("net.dv8tion", "JDA") }
             content { includeGroup("club.minnced") }
         }
         maven {
-            url 'https://jitpack.io'
+            url = 'https://jitpack.io'
             content { includeGroup("space.npstr") }
         }
     }
@@ -162,8 +165,8 @@ allprojects {
     }
 
     testlogger {
-        theme 'mocha-parallel'
-        showFullStackTraces true
+        theme = 'mocha-parallel'
+        showFullStackTraces = true
     }
 
     jacocoTestReport {
@@ -249,6 +252,7 @@ apply plugin: 'com.bmuschko.docker-remote-api'
 
 configurations {
     flywayMigration
+    mockitoAgent
 
     // fucks with spring boot jar, we dont need it anyways
     // be VERY careful and test the produced jar if ever reenabled
@@ -286,8 +290,7 @@ dependencies {
     implementation(group: "io.netty", name: "netty-transport-native-epoll", classifier: "linux-x86_64")
     implementation(group: "io.netty", name: "netty-transport-native-kqueue", classifier: "osx-x86_64")
 
-    // not part of v1.3.2 BOM for some reason
-    implementation "io.prometheus:prometheus-metrics-instrumentation-caffeine:$prometheusClientVersion"
+    implementation "io.prometheus:prometheus-metrics-instrumentation-caffeine"
     implementation "io.prometheus:prometheus-metrics-instrumentation-jvm"
     implementation "space.npstr:prometheus_extensions:$prometheusExtensionsVersion"
     implementation "io.micrometer:micrometer-registry-prometheus"
@@ -338,8 +341,11 @@ dependencies {
     testImplementation "org.testcontainers:testcontainers"
     testImplementation "org.testcontainers:selenium"
     testImplementation "com.codeborne:selenide:$selenideVersion"
-    testImplementation "org.mockito.kotlin:mockito-kotlin:$mockitoKotlinVersion"
     testImplementation "org.awaitility:awaitility"
+
+    testImplementation "org.mockito:mockito-core"
+    mockitoAgent("org.mockito:mockito-core") { transitive = false }
+    testImplementation "org.mockito.kotlin:mockito-kotlin:$mockitoKotlinVersion"
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -369,9 +375,8 @@ tasks.withType(SonarTask).configureEach {
 
 springBoot {
     buildInfo {
-        properties {
-            time = null
-        }
+        // for deterministic builds
+        excludes = ['time']
     }
 }
 
@@ -388,6 +393,10 @@ bootRun {
     }
 }
 
+jar {
+    onlyIf { false }
+}
+
 bootJar {
     archiveFileName = "wolfia.jar"
 }
@@ -397,6 +406,13 @@ tasks.register('pullCodegenDbContainer', DockerPullImage) {
 }
 
 tasks.register('createCodegenDbContainer', DockerCreateContainer) {
+    // this runs intentionally during configuration phase
+    try {
+        // Workaround for rejected PR https://github.com/bmuschko/gradle-docker-plugin/pull/1146
+        mkdir project.layout.buildDirectory.dir(".docker")
+    } catch (ignored) {
+        // happens when directory already exists
+    }
     dependsOn pullCodegenDbContainer
     targetImageId(codegenDbImageName)
     containerName.set(codegenDbContainerName)
@@ -457,6 +473,7 @@ flyway {
         doFirst {
             // running these manually in a doFirst closure ensures that they are not executed all the time
             // currently there is no better way of running tasks optionally that another task depends on
+            // see also https://github.com/gradle/gradle/issues/1414
             pullCodegenDbContainer.start()
             stopCodegenDbContainerPre.start()
             createCodegenDbContainer.start()
@@ -545,6 +562,7 @@ generateJooq {
 }
 
 test {
+    jvmArgs("-javaagent:${configurations.mockitoAgent.asPath}")
     dependsOn(flywayMigrate)
     doLast {
         stopCodegenDbContainerPost.start()
@@ -564,4 +582,14 @@ String versionTag() {
 
     println("Version: " + result)
     return result
+}
+
+idea {
+    module {
+        excludeDirs += [
+                file("logs"),
+                file("docker/**/logs"),
+                file("docker/**/postgres-data"),
+        ]
+    }
 }
